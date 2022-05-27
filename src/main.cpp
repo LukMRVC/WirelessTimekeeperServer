@@ -4,7 +4,7 @@
 #define RADIO_CHANNEL 16
 #define DEVICE_ADDRESS 0x2F
 #define DEST_DEVICE_ADDRESS 0x1F
-#define FREQ 868.0
+#define FREQ 433.68
 
 #define DEBOUNCE_DELAY 50
 
@@ -43,6 +43,9 @@ bool readButton(const short btnPin, const size_t btnIdx)
   return changed;
 }
 
+char serial_output_buffer[128];
+char result_time_buffer[8];
+
 void setup()
 {
 
@@ -68,6 +71,8 @@ void setup()
   ELECHOUSE_cc1101.setAddr(DEVICE_ADDRESS);
   ELECHOUSE_cc1101.setAdrChk(1); // when addChk is enabled, every sent packet first byte must be the destination address
   Serial.println(F("Tx Mode"));
+  memset(serial_output_buffer, 0, 128);
+  memset(result_time_buffer, 0, 8);
 }
 
 const short buffer_size = 32;
@@ -75,7 +80,7 @@ char transmission_buffer[buffer_size];
 byte receiving_buffer[buffer_size];
 int counter = 0;
 
-unsigned long timers[2] = {0, 0};
+unsigned long timer_start = 0;
 unsigned long timer_stops[2] = {0, 0};
 
 void loop()
@@ -92,20 +97,29 @@ void loop()
     Serial.print(F("Sending radio data: "));
     Serial.println(transmission_buffer);
     ELECHOUSE_cc1101.SendData(transmission_buffer, buffer_size);
-    if (timers[0] == 0 && timers[1] == 0)
-    {
-      Serial.println(F("Starting timer..."));
-      timers[0] = millis();
-      timers[1] = millis();
-    }
+    // TOOD: uncomment sometime
+    // if (timer_start == 0)
+    // {
+    Serial.println(F("Starting timer..."));
+    timer_start = millis();
+    timer_stops[0] = 0;
+    timer_stops[1] = 0;
+    // }
   }
 
-  if (timers[0] > 0 || timers[1] > 0)
+  if (timer_start > 0)
   {
     if (ELECHOUSE_cc1101.CheckRxFifo(100))
     {
       if (ELECHOUSE_cc1101.CheckCRC())
       {
+        int rssi = ELECHOUSE_cc1101.getRssi();
+        int lqi = ELECHOUSE_cc1101.getLqi();
+        Serial.print("RSSI: ");
+        Serial.print(rssi);
+        Serial.println(" dBm - closer to 0 is better");
+        Serial.print("LQI: ");
+        Serial.println(lqi);
         int len = ELECHOUSE_cc1101.ReceiveData(receiving_buffer);
         receiving_buffer[len] = '\0';
         Serial.print(F("Received: "));
@@ -125,11 +139,30 @@ void loop()
           }
           else
           {
-            timer_stops[timerIdx] = millis();
-            Serial.print(F("TIMER result: "));
-            Serial.print(timer_stops[timerIdx] - timers[timerIdx]);
-            Serial.println(" ms.");
-            timer_stops[timerIdx] = 0;
+            if (timer_stops[timerIdx] == 0)
+            {
+              timer_stops[timerIdx] = millis();
+              double time_in_seconds = (timer_stops[timerIdx] - timer_start) / 1000.0;
+              dtostrf(time_in_seconds, 5, 3, result_time_buffer);
+              sprintf(serial_output_buffer, "Timer %d stopped in: %s s.", timerIdx + 1, result_time_buffer);
+              Serial.println(serial_output_buffer);
+            }
+            else
+            {
+              sprintf(serial_output_buffer, "Timer %d already stopped.", timerIdx + 1);
+              Serial.println(serial_output_buffer);
+            }
+          }
+
+          if (timer_stops[0] > 0 && timer_stops[1] > 0)
+          {
+            memset(result_time_buffer, 0, 8);
+            auto result_stop = timer_stops[0] > timer_stops[1] ? timer_stops[0] : timer_stops[1];
+            double result_in_seconds = (result_stop - timer_start) / 1000;
+            dtostrf(result_in_seconds, 5, 3, result_time_buffer);
+            sprintf(serial_output_buffer, "Result time: %s s.", result_time_buffer);
+            Serial.println(serial_output_buffer);
+            timer_start = 0;
           }
         }
       }
